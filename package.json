@@ -1,0 +1,37 @@
+{
+  "name": "employee-agents-backend",
+  "version": "1.0.0",
+  "description": "Open-source single-owner backend for Employee Agents",
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build:contracts": "npm --workspace=@open-employee/contracts run build",
+    "build:server": "npm run build:contracts && node scripts/build-server.mjs",
+    "start": "node dist/server.mjs"
+  },
+  "dependencies": {
+    "@openai/codex": "^0.169.0",
+    "@types/qrcode": "^1.5.6",
+    "better-sqlite3": "^12.11.1",
+    "jsqr": "^1.4.0",
+    "lucide-react": "^1.16.0",
+    "marked": "^18.1.3",
+    "nodemailer": "^10.6.0",
+    "pptxgenjs": "^4.0.1",
+    "qrcode": "^1.5.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "ws": "^8.22.1",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.3",
+    "@types/node": "^20.17.19",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/ws": "^8.18.2"
+  }
+}

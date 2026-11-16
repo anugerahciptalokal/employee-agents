@@ -1,0 +1,12 @@
+{
+  "name": "@open-employee/backend",
+  "version": "1.0.0",
+  "private": false,
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/server/standalone.ts",
+  "scripts": {
+    "build": "node ../../scripts/build-server.mjs",
+    "start": "node ../../dist/server.mjs"
+  }
+}

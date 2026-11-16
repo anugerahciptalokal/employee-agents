@@ -1,0 +1,13 @@
+.git
+node_modules
+out
+dist
+.data
+data
+.data-test*
+.chrome-remote-profile
+.agent
+apps/mobile
+*.jsbundle
+*.log
+

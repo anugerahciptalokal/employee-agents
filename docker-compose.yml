@@ -1,0 +1,39 @@
+# Self-Hosted Open-Source Backend (Single-Owner / Optional Control Plane Link)
+name: employee-agents-backend
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: employee-agents-backend:${IMAGE_TAG:-local}
+    container_name: employee-agents-backend
+    restart: unless-stopped
+    ports:
+      - "${APP_HOST:-127.0.0.1}:${APP_PORT:-3060}:3060"
+    volumes:
+      - ./data:/app/.data
+    environment:
+      - NODE_ENV=production
+      - PORT=3060
+      - HOST=0.0.0.0
+      - OPEN_EMPLOYEE_DATA_DIR=/app/.data
+      - OPEN_EMPLOYEE_VAULT_KEY=${OPEN_EMPLOYEE_VAULT_KEY:-}
+      - OPEN_EMPLOYEE_API_TOKEN=${OPEN_EMPLOYEE_API_TOKEN:-}
+      - OPEN_EMPLOYEE_LAN=${OPEN_EMPLOYEE_LAN:-1}
+      - ENABLE_HEADLESS_BROWSER=${ENABLE_HEADLESS_BROWSER:-1}
+      - PUBLIC_URL=${PUBLIC_URL:-}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-}
+      - CONTROL_PLANE_PUBLIC_KEY=${CONTROL_PLANE_PUBLIC_KEY:-}
+      - CONTROL_PLANE_ISSUER=${CONTROL_PLANE_ISSUER:-}
+      - CONTROL_PLANE_AUDIENCE=${CONTROL_PLANE_AUDIENCE:-}
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3060/api/meta').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

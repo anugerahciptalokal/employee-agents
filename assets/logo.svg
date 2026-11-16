@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 492 525" width="492" height="525" role="img" aria-label="Employee Agents Logo">
+  <defs>
+    <g id="head-silhouette">
+      <!-- Antenna ball & stem -->
+      <circle cx="246" cy="31" r="30" />
+      <rect x="234" y="54" width="24" height="44" />
+      <!-- Left & right ear bumps -->
+      <rect x="2" y="238" width="60" height="135" rx="30" />
+      <rect x="430" y="238" width="60" height="135" rx="30" />
+      <!-- Main head -->
+      <circle cx="246" cy="305.5" r="217.5" />
+    </g>
+  </defs>
+
+  <!-- Crisp outer border without internal seams -->
+  <use href="#head-silhouette" fill="#0e3d22" stroke="#0e3d22" stroke-width="4" stroke-linejoin="round" />
+  <!-- Main green fill -->
+  <use href="#head-silhouette" fill="#2cc66a" />
+
+  <!-- Dark green visor -->
+  <rect x="83" y="190" width="326" height="212" rx="96" fill="#1e8d56" />
+
+  <!-- White eyes -->
+  <rect x="156" y="257" width="44" height="78" rx="22" fill="#ffffff" />
+  <rect x="292" y="257" width="44" height="78" rx="22" fill="#ffffff" />
+</svg>

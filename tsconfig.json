@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": [
+        "packages/contracts/src/*"
+      ],
+      "@open-employee/contracts/*": [
+        "packages/contracts/src/*"
+      ],
+      "@backend/*": [
+        "packages/backend/src/*"
+      ]
+    }
+  },
+  "include": [
+    "packages"
+  ]
+}

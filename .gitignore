@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Production builds
+dist/
+out/
+
+# Local database & persistent runtime files
+.data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Headless browser runtime & session profiles
+.chrome-remote-profile/
+.tmp/
+tmp/
+
+# Logs & temp
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS & Editor metadata
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+vault.json
+credentials.json
+
+# Internal agent skills and private orchestration backlogs
+.agent/
+.myemployee/
+AGENTS.md
+
