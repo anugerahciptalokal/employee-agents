@@ -4,6 +4,15 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { AddressInfo } from 'net';
+import { AsyncLocalStorage } from 'async_hooks';
+import {
+  attachEnterpriseControlPlane,
+  CloudAccountManager
+} from './cloud-control-plane';
+import {
+  EnterpriseTenantPool,
+  type WorkspaceRuntimeContext
+} from './tenant-runtime-pool';
 import { getDataLayoutPaths, migrateLegacyDataLayout } from '../core/data-root';
 import { WorkspaceDatabase } from '../core/db';
 import {
@@ -133,6 +142,13 @@ export class StandaloneServer {
   private readonly handleExtensionRequest?: StandaloneServerOptions['handleExtensionRequest'];
   private readonly controlPlaneConfigPath: string;
   private controlPlaneConfig: (ControlPlaneClaimResponse & { controlPlaneUrl?: string }) | null = null;
+  private readonly tenantPool: EnterpriseTenantPool;
+  private readonly tenantStorage = new AsyncLocalStorage<WorkspaceRuntimeContext | null>();
+  private readonly tenantTurnRunners = new Map<string, BackgroundTurnRunner>();
+  private cloudControlPlane: {
+    manager: CloudAccountManager;
+    handleRequest: (req: http.IncomingMessage, res: http.ServerResponse, pathname: string) => Promise<boolean>;
+  } | null = null;
 
   constructor(options: StandaloneServerOptions = {}) {
     this.port = options.port !== undefined ? options.port : parseInt(process.env.PORT || '3050', 10);
@@ -150,6 +166,7 @@ export class StandaloneServer {
     this.authManager = new SingleOwnerAuthManager({
       secretPath: path.join(this.dataDir, 'secrets', '.auth.secret')
     });
+    this.tenantPool = new EnterpriseTenantPool({ dataDir: this.dataDir });
 
     this.aiClient = new AIGatewayClient({
       allowLoopbackTestHost: true
@@ -194,12 +211,72 @@ export class StandaloneServer {
   }
 
   private getFileManager(): FileManager {
+    const scoped = this.tenantStorage.getStore();
+    if (scoped) return scoped.fileManager;
     if (!this.fileManager) {
       this.fileManager = new FileManager(this.dataDir, {
         secretRedactor: (text) => (this.vault ? this.vault.redactSecrets(text) : redactSecrets(text))
       });
     }
     return this.fileManager;
+  }
+
+  private getActiveDb(): WorkspaceDatabase {
+    return this.tenantStorage.getStore()?.db || this.database!;
+  }
+
+  private getActiveVault(): VaultManager {
+    return this.tenantStorage.getStore()?.vault || this.vault!;
+  }
+
+  private getActiveTurnRunner(): BackgroundTurnRunner | null {
+    const scoped = this.tenantStorage.getStore();
+    if (scoped) {
+      let runner = this.tenantTurnRunners.get(scoped.workspaceId);
+      if (!runner) {
+        runner = new BackgroundTurnRunner(
+          () => scoped.db,
+          () => scoped.vault,
+          () => this.aiClient,
+          scoped.workspaceRoot,
+          () => scoped.fileManager,
+          (reason) => this.workspaceWsHub.broadcastUpdate(reason),
+          (browserEvent) => this.workspaceWsHub.broadcastBrowserEvent(browserEvent)
+        );
+        this.tenantTurnRunners.set(scoped.workspaceId, runner);
+      }
+      return runner;
+    }
+    return this.turnRunner;
+  }
+
+  private getCloudControlPlane() {
+    if (!this.cloudControlPlane) {
+      const manager = new CloudAccountManager({ dataDir: this.dataDir });
+      const ext = attachEnterpriseControlPlane(manager);
+      this.cloudControlPlane = {
+        manager,
+        handleRequest: ext.handleExtensionRequest
+      };
+    }
+    return this.cloudControlPlane;
+  }
+
+  private resolveTenantContext(req: http.IncomingMessage): WorkspaceRuntimeContext | null {
+    const cookieHeader = req.headers.cookie || '';
+    const match = cookieHeader.match(/(?:^|;\s*)ea_auth=([^;]+)/);
+    const cookieToken = match ? decodeURIComponent(match[1]) : null;
+    const bearerToken = extractBearerToken(req.headers.authorization);
+    const token = cookieToken || bearerToken;
+    if (!token) return null;
+
+    const { manager } = this.getCloudControlPlane();
+    const activeUser = manager.verifyCloudToken(token);
+    if (!activeUser) return null;
+
+    const ownerId = manager.getWorkspaceOwnerId(activeUser.workspaceId);
+    if (!ownerId) return null;
+    return this.tenantPool.getWorkspaceRuntime(ownerId, activeUser.workspaceId);
   }
 
   private async resolveVisionImage(
@@ -425,6 +502,11 @@ export class StandaloneServer {
       if (handled) return;
     }
 
+    if (pathname.startsWith('/api/cloud/')) {
+      const handled = await this.getCloudControlPlane().handleRequest(req, res, pathname);
+      if (handled) return;
+    }
+
     if (pathname === '/api/pairing/claim-control-plane' && req.method === 'POST') {
       try {
         const body = await this.readJsonBody<{ linkCode?: string; controlPlaneUrl?: string }>(req);
@@ -544,7 +626,8 @@ export class StandaloneServer {
 
     // API Routing
     if (pathname.startsWith('/api')) {
-      if (!this.isAuthorized(req)) {
+      const tenantCtx = this.resolveTenantContext(req);
+      if (!tenantCtx && !this.isAuthorized(req)) {
         res.statusCode = 401;
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ error: 'Unauthorized: valid API token required.' }));
@@ -555,7 +638,7 @@ export class StandaloneServer {
         const identity = this.resolveBearerIdentity(req) || {
           userId: 'owner-local',
           role: 'owner' as const,
-          workspaceId: 'default',
+          workspaceId: tenantCtx?.workspaceId || 'default',
           issuer: 'local-api-token'
         };
         const ticket = this.authManager.issueWsTicket(identity);
@@ -565,7 +648,9 @@ export class StandaloneServer {
         return;
       }
 
-      await this.handleApiRequest(req, res, pathname, parsedUrl);
+      await this.tenantStorage.run(tenantCtx, () =>
+        this.handleApiRequest(req, res, pathname, parsedUrl)
+      );
       return;
     }
 
@@ -604,8 +689,8 @@ export class StandaloneServer {
     pathname: string,
     parsedUrl: URL
   ): Promise<void> {
-    const db = this.database!;
-    const vault = this.vault!;
+    const db = this.getActiveDb();
+    const vault = this.getActiveVault();
 
     // Device revocation and heartbeat guard
     const deviceIdHeader = req.headers['x-device-id'];
@@ -875,7 +960,8 @@ export class StandaloneServer {
         messagesByConversation[a.id] = db.getMessages(a.id);
       }
       const activeState = db.getActiveConversation();
-      const generatingConversations = this.turnRunner ? this.turnRunner.getGeneratingMap() : {};
+      const activeRunner = this.getActiveTurnRunner();
+      const generatingConversations = activeRunner ? activeRunner.getGeneratingMap() : {};
 
       res.setHeader('Content-Type', 'application/json');
       res.end(
@@ -952,10 +1038,11 @@ export class StandaloneServer {
     if (pathname === '/api/chat/send' && req.method === 'POST') {
       try {
         const intent = await this.readJsonBody(req);
-        if (!this.turnRunner) {
+        const activeRunner = this.getActiveTurnRunner();
+        if (!activeRunner) {
           throw new Error('Background turn runner is not initialized');
         }
-        const result = await this.turnRunner.executeTurn(intent);
+        const result = await activeRunner.executeTurn(intent);
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify(result));
       } catch (err: unknown) {
@@ -1340,7 +1427,7 @@ export class StandaloneServer {
     if (pathname === '/api/usage' && req.method === 'GET') {
       try {
         const range = parsedUrl.searchParams.get('range') || '30d';
-        const summary = this.database!.getUsageSummary(usageRangeToSince(range));
+        const summary = db.getUsageSummary(usageRangeToSince(range));
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ range, ...summary }));
       } catch (err: unknown) {
@@ -1449,7 +1536,7 @@ export class StandaloneServer {
           });
         }
 
-        this.database!.recordUsage({
+        db.recordUsage({
           conversationId:
             typeof params.conversationId === 'string'
               ? params.conversationId
@@ -1613,14 +1700,14 @@ export class StandaloneServer {
           return;
         }
 
-        const messages = this.database?.getMessages(conversationId) || [];
+        const messages = db.getMessages(conversationId) || [];
         const result = compactMessages(messages, {
           preserveRecentCount: body?.preserveRecentCount || 6
         });
 
-        if (result.summary && this.database) {
+        if (result.summary) {
           const lastCompactedMsg = messages[result.compactedCount - 1];
-          this.database.saveConversationSummary(
+          db.saveConversationSummary(
             conversationId,
             result.summary,
             lastCompactedMsg?.id || 'unknown',

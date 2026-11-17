@@ -80,6 +80,30 @@ export interface BackgroundTurnIntent {
   contextMessages?: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>;
 }
 
+export type TurnActivityHookEvent =
+  | {
+      kind: 'turn:start' | 'turn:done';
+      conversationId: string;
+      turnId: string;
+      agentName: string;
+    }
+  | {
+      kind: 'turn:step';
+      conversationId: string;
+      turnId: string;
+      agentName: string;
+      step: string;
+    }
+  | {
+      kind: 'assign';
+      conversationId: string;
+      turnId: string;
+      targetAgentId: string;
+      targetAgentName: string;
+      status: 'asked' | 'working' | 'replied' | 'failed';
+      preview?: string;
+    };
+
 export interface BackgroundTurnResult {
   success: boolean;
   userMessage?: Message;
@@ -100,7 +124,8 @@ export class BackgroundTurnRunner {
     private readonly dataDir: string,
     private readonly getFileManager?: () => FileManager,
     private readonly onWorkspaceChanged?: (reason: string) => void,
-    private readonly onBrowserEvent?: (event: BrowserSyncEvent) => void
+    private readonly onBrowserEvent?: (event: BrowserSyncEvent) => void,
+    private readonly onTurnActivity?: (event: TurnActivityHookEvent) => void
   ) {}
 
   public isGenerating(conversationId: string): boolean {
@@ -222,6 +247,13 @@ export class BackgroundTurnRunner {
             error: 'No API key configured.'
           };
         }
+
+        this.onTurnActivity?.({
+          kind: 'turn:start',
+          conversationId,
+          turnId: requestId,
+          agentName
+        });
 
         // Multimodal image resolution
         let imageUrl: string | undefined = intent.visionDataUrl || intent.dataUrl;
@@ -536,6 +568,15 @@ export class BackgroundTurnRunner {
           runCompletion,
           vault,
           onBrowserEvent: this.onBrowserEvent,
+          onToolStep: (step) => {
+            this.onTurnActivity?.({
+              kind: 'turn:step',
+              conversationId,
+              turnId: requestId,
+              agentName,
+              step
+            });
+          },
           dataRoot: this.dataDir
         });
         let completion: import('../core/agents/ai-gateway-client').ChatCompletionResult = toolResult;
@@ -565,6 +606,16 @@ export class BackgroundTurnRunner {
             const { targetAgent: teammate, question } = directive;
             const teammateModel = teammate.model || model;
 
+            this.onTurnActivity?.({
+              kind: 'assign',
+              conversationId,
+              turnId: requestId,
+              targetAgentId: teammate.id,
+              targetAgentName: teammate.name,
+              status: 'asked',
+              preview: question.slice(0, 120)
+            });
+
             db.addMessage(
               teammate.id,
               `[Message from @${agentName}]: ${question}`,
@@ -593,6 +644,16 @@ export class BackgroundTurnRunner {
               `Your colleague @${agentName} from this workspace is messaging you directly. Reply naturally and concisely in character as ${teammate.name}.`
             ].join('\n\n');
 
+            this.onTurnActivity?.({
+              kind: 'assign',
+              conversationId,
+              turnId: requestId,
+              targetAgentId: teammate.id,
+              targetAgentName: teammate.name,
+              status: 'working',
+              preview: question.slice(0, 120)
+            });
+
             const teammateCompletion = await runCompletion(
               teammateModel,
               teammateSystemPrompt,
@@ -606,6 +667,16 @@ export class BackgroundTurnRunner {
             const cleanTeammateReply = vault.redactSecrets(
               stripAskAgentDirectives(rawTeammateReply) || rawTeammateReply
             );
+
+            this.onTurnActivity?.({
+              kind: 'assign',
+              conversationId,
+              turnId: requestId,
+              targetAgentId: teammate.id,
+              targetAgentName: teammate.name,
+              status: teammateCompletion.success ? 'replied' : 'failed',
+              preview: cleanTeammateReply.slice(0, 140)
+            });
 
             db.addMessage(
               teammate.id,
@@ -742,6 +813,12 @@ export class BackgroundTurnRunner {
         };
       } finally {
         this.activeTurns.delete(conversationId);
+        this.onTurnActivity?.({
+          kind: 'turn:done',
+          conversationId,
+          turnId: requestId,
+          agentName
+        });
         this.onWorkspaceChanged?.('turn:completed');
       }
     };

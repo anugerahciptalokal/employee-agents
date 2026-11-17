@@ -619,6 +619,36 @@ async function fetchDocumentationUrl(options: {
   }
 }
 
+function formatToolStepLabel(toolName: string, args: Record<string, unknown>): string {
+  switch (toolName) {
+    case 'browser_open':
+    case 'browser_navigate':
+      return typeof args.url === 'string' && args.url ? `Opening ${args.url}` : 'Opening browser page';
+    case 'browser_snapshot':
+      return 'Reading page snapshot';
+    case 'browser_click':
+      return 'Clicking page element';
+    case 'browser_type':
+      return 'Typing into page element';
+    case 'browser_scroll':
+      return 'Scrolling page';
+    case 'browser_download_media':
+      return 'Downloading media attachment';
+    case 'browser_vault_login':
+      return 'Signing in with vault credentials';
+    case 'web_search':
+      return typeof args.query === 'string' && args.query
+        ? `Searching web: ${args.query}`
+        : 'Searching the web';
+    case 'web_fetch_doc':
+      return typeof args.url === 'string' && args.url
+        ? `Fetching document: ${args.url}`
+        : 'Fetching web document';
+    default:
+      return `Running tool: ${toolName}`;
+  }
+}
+
 export async function runAgentToolLoop(params: {
   model: string;
   systemPrompt: string;
@@ -628,6 +658,7 @@ export async function runAgentToolLoop(params: {
   runCompletion: RunCompletionFn;
   vault?: VaultManager;
   onBrowserEvent?: (event: BrowserSyncEvent) => void;
+  onToolStep?: (step: string) => void;
   maxSteps?: number;
   dataRoot?: string;
 }): Promise<AgentToolLoopResult> {
@@ -715,6 +746,7 @@ export async function runAgentToolLoop(params: {
 
     for (const call of toolCalls) {
       const args = call.arguments || {};
+      params.onToolStep?.(formatToolStepLabel(call.name, args));
       switch (call.name) {
         case 'browser_open':
         case 'browser_navigate': {

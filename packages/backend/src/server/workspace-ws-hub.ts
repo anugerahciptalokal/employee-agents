@@ -78,6 +78,13 @@ export class WorkspaceWsHub {
     });
   }
 
+  public broadcastExtensionEvent(payload: Record<string, unknown> & { type: string }): void {
+    this.broadcastPayload({
+      ...payload,
+      ts: Date.now()
+    } as WorkspaceWsEvent);
+  }
+
   private broadcastPayload(payload: WorkspaceWsEvent): void {
     if (this.clients.size === 0) return;
     const encoded = JSON.stringify(payload);
